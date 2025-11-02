@@ -3,7 +3,7 @@
 ## 1. 프로젝트 개요
 
 ### 1.1 목표
-API Rate Limiting 분야에서 **Reactive 전략 (LinUCB)** 과 **Predictive 전략 (LSTM)** 을 동일 환경에서 공정하게 비교하여 모델 선택 가이드라인 제시
+현실 LLM 서비스 트래픽(BurstGPT)에서 **Predictive 전략(LSTM)**과 **Reactive 전략(LinUCB)** 을 동일한 데이터·환경·메트릭으로 공정 비교해, 트래픽 패턴별 최적 Rate Limiting 정책을 제시한다.
 
 ### 1.2 데이터셋
 - **이름**: BurstGPT v1.1
@@ -14,9 +14,9 @@ API Rate Limiting 분야에서 **Reactive 전략 (LinUCB)** 과 **Predictive 전
 ### 1.3 비교 대상
 | 전략 | 유형 | 주요 특성 | 의사결정 주기 |
 |------|------|---------|------------|
-| **Static** | 기준선 | 고정값 (P95 RPS) | N/A |
-| **LinUCB** | Reactive | 온라인 적응 학습 | 1초 |
-| **LSTM** | Predictive | 오프라인 예측 학습 | 60초 |
+| **Static** | 기준선 | Train P95임계값 | N/A |
+| **LinUCB** | Reactive | 컨텍스트 기반 온라인 적응 | 1초 |
+| **LSTM** | Predictive | 시계열 기반 선제 예측 | 60초 |
 
 ### 1.4 기간
 - **실험 기간**: 7일
@@ -29,42 +29,34 @@ API Rate Limiting 분야에서 **Reactive 전략 (LinUCB)** 과 **Predictive 전
 ## 2. 데이터 명세
 
 ### 2.1 입력 데이터
-**파일**: burstgpt_timeseries.csv
+**원본 파일**: `BurstGPT_1.csv`, `BurstGPT_2.csv`
 
-| 컬럼 | 타입 | 설명 | 예시 |
-|------|------|------|------|
-| timestamp | datetime | UTC 시간 | 2023-01-01 00:00:00 |
-| rps | float | Request Per Second | 1250.5 |
-| p99_latency | float | 토큰 기반 추정 (ms) | 450.0 |
-| error_rate | float | 실패율 (0-1) | 0.02 |
-| model | string | 모델명 | gpt-4, gpt-3.5 |
-| response_tokens | int | 평균 응답 토큰 | 15 |
+**시계열 변환 결과(`burstgpt_timeseries.csv`) 컬럼**:
+
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| second | int | Unix timestamp (1초 단위) |
+| rps | float | 초당 요청 수 |
+| p99_latency | float | 응답 토큰 기반 99th percentile latency (ms) |
+| error_rate | float | 실패 요청 비율 (0-1) |
+| cpu_percent | float | 토큰 throughput 기반 CPU 사용률 (0-100) |
 
 ### 2.2 데이터 분할
-```
-전체 (121일, 5.29M traces)
-├─ Train: Day 1-84 (70%, 1.76M)
-├─ Warmup: Day 85-96 (10%, 0.25M)
-└─ Test: Day 97-121 (20%, 0.5M) × 5 시간 구간
-    ├─ Test_1: Day 97-101
-    ├─ Test_2: Day 102-106
-    ├─ Test_3: Day 107-111
-    ├─ Test_4: Day 112-116
-    └─ Test_5: Day 117-121
-```
+Train: Day 1-84 (70%) – LSTM 학습  
+Warmup: Day 85-96 (10%) – LinUCB 초기 적응  
+Test: Day 97-121 (20%) – 실측 시나리오 추출
 
 ### 2.3 시나리오 정의
-**2개 시나리오만 (현실적 범위)**
+**4개 실측 시나리오 (BurstGPT 기반)**
 
-#### 시나리오 1: Normal (정상 트래픽)
-- RPS: 안정적 ± 10%
-- 주기: 일일 패턴 반복
-- 목표: 기본 성능 비교
+| 시나리오 | 추출 대상 | 주요 특징 | 비교 목적 |
+|----------|-----------|-----------|-----------|
+| Conversation-Periodic | Conversation log (ChatGPT) 평일 근무시간 | 일일/주간 주기, CV≈0.3 | 패턴 학습 능력(LSTM) 검증 |
+| API-Burst | API log (GPT-4) 급증 구간 | 8~12배 급증, failure spike 23% | 즉각 적응(LinUCB) 능력 검증 |
+| Gradual-Drift | 사용자 증가 구간 | 2~3배 성장, 분포 변동 | 분포 변화 대응(LSTM vs LinUCB) |
+| Failure-Spike | 실패율 집중 구간 | 정상 RPS → 에러율 급증 | 실패 복구 속도(LinUCB 가드레일) |
 
-#### 시나리오 2: Spike (급증)
-- RPS: 5배 이상 급격한 증가 (< 10초)
-- 지속: 최소 30초 이상
-- 목표: 적응 능력 비교 (LinUCB 유리 예상)
+시나리오 생성은 `scripts/prepare_scenarios.py`로 BurstGPT 원본에서 직접 추출한다.
 
 ---
 
@@ -84,18 +76,23 @@ class StaticRateLimiter:
 ### 3.2 LSTM (Predictive)
 ```python
 class LSTMPredictor:
-    input: past_60_sec_rps  # 60초 과거 데이터
+    input: past_60_sec_features  # [RPS, P99, Error, CPU] × 60초
     output: predict_next_60_sec_rps
+    architecture:
+      LSTM(64) → LSTM(32) → Dense(16) → Dense(horizon)
     learning: offline supervised (70% data)
     decision: if predicted_rps > threshold → pre-limit
 ```
 
-**하이퍼파라미터**:
+**하이퍼파라미터 (고정)**:
 - window_size: 60초
-- hidden_units: 128
+- prediction_horizon: 60초
 - dropout: 0.2
-- epochs: 50
+- batch_size: 32
+- epochs: 50 (Early stopping, patience=5)
+- optimizer: Adam (lr=0.001)
 - loss: MSE
+- 입력 피처: `[rps, p99_latency, error_rate, cpu_percent]`
 
 ### 3.3 LinUCB (Reactive)
 ```python
@@ -147,6 +144,38 @@ class LinUCBAgent:
 목표: 낮을수록 좋음
 ```
 
+### 4.5 Predictive Accuracy (Gradual 시나리오)
+```
+계산: |예측 RPS - 실제 RPS|의 MAE (LSTM 전용)
+신뢰도: ⭐⭐⭐⭐
+범위: 0-500 RPS
+목표: 낮을수록 좋음
+```
+
+### 4.6 Tracking Lag (Gradual 시나리오, LinUCB)
+```
+계산: throttle_limit < 실제 RPS인 초(second) 누적
+신뢰도: ⭐⭐⭐
+범위: 0-지속시간
+목표: 낮을수록 좋음
+```
+
+### 4.7 Pattern Recognition (Periodic 시나리오)
+```
+계산: RPS 시계열의 자기상관 (lag = period/2)
+신뢰도: ⭐⭐⭐
+범위: -1~1
+목표: 1에 가까울수록 강한 패턴 인식
+```
+
+### 4.8 Proactive Adjustment (Periodic 시나리오)
+```
+계산: 전환 시점 전/후 ±30초 error rate 차이 (후 - 전)
+신뢰도: ⭐⭐⭐
+범위: -1~1
+목표: 음수(전환 전에 미리 대비)
+```
+
 ---
 
 ## 5. 실험 설계
@@ -156,7 +185,7 @@ class LinUCBAgent:
 각 시나리오 × 모델 조합마다:
 - 10회 반복 (seed 0-9)
 - 5개 시간 구간 각각에서 평가
-- 총: 2 시나리오 × 3 모델 × 10 seeds = 60회
+- 총: 4 시나리오 × 3 모델 × 10 seeds = 120회
 ```
 
 ### 5.2 통계 검증
@@ -182,12 +211,9 @@ class LinUCBAgent:
 ### 6.1 결과 파일
 ```
 results/
-├── scenario_1_normal_results.csv
-│   ├── model, seed, time_window, p99_latency, success_rate, stability_score
-├── scenario_2_spike_results.csv
-│   ├── model, seed, time_window, p99_latency, success_rate, adaptation_time
-└── statistical_summary.txt
-    ├── t-test results, p-values, effect size
+├── {Model}_{Scenario}_{Seed}.json
+├── {Model}_{Scenario}_{Seed}_details.csv
+└── statistical_report.md  # 통합 통계 요약
 ```
 
 ### 6.2 시각화
@@ -195,9 +221,7 @@ results/
 plots/
 ├── comparison_p99_boxplot.png
 ├── success_rate_barplot.png
-├── stability_trend.png
-├── adaptation_time_histogram.png
-└── convergence_curves.png
+└── ...
 ```
 
 ### 6.3 논문 (4-6페이지)
@@ -220,7 +244,7 @@ plots/
 
 ### 7.2 제한사항 명시
 - ⚠️ P99는 추정값 (절대값 신뢰도 제한, 상대 비교만 유효)
-- ⚠️ 2개 시나리오만 (proof-of-concept)
+- ⚠️ 4개 시나리오이지만 축약 데이터셋(샘플) 기반
 - ⚠️ n=10 (통계적 완전성 한계)
 - → Limitations 섹션에 명확히 표기
 
@@ -252,15 +276,28 @@ plots/
 |------|------|---------|
 | v1.0 | 2025-10-29 | 초안 작성 |
 | v1.1 | 2025-10-29 | AI 피드백 반영 (60회 실험, 2개 시나리오) |
+| v1.2 | 2025-10-30 | Gradual·Periodic 시나리오 및 신규 메트릭 반영 |
 | v2.0 | TBD | 최종 확정 |
 
 ---
 
 ## 10. 승인 및 체크리스트
 
-- [ ] 명세 검토 완료
-- [ ] 데이터 가용성 확인
-- [ ] 모델 구현 가능성 검증
-- [ ] 일정 확인 (7일 내)
-- [ ] 의존성 설치 완료
+- [x] 명세 검토 완료
+- [x] 데이터 가용성 확인
+- [x] 모델 구현 가능성 검증
+- [x] 일정 확인 (7일 내)
+- [x] 의존성 설치 완료
 
+---
+
+## 11. 실험 결과 해석 (요약)
+
+120회 반복 실험(Train 70 % 전체 사용, `samples_per_epoch=200,000`)에 대한 핵심 해석은 다음과 같다.
+
+- **Gradual (점진적 증가)**: LSTM 평균 성공률 0.632로 Static(0.463)·LinUCB(0.455)을 크게 앞섰다. ramp-up 구간에서도 허용률 0.6 이상을 유지하며 안정성 점수도 0.40 수준까지 끌어올렸다(MAE ≈ 1.5k RPS).
+- **Normal (정상 패턴)**: LSTM이 0.9999에 가까운 성공률로 대부분의 요청을 수용했다(Static 0.634, LinUCB 0.610). paired t-test 결과 p<1e-6으로 LSTM이 LinUCB 대비 통계적으로 우월하다.
+- **Periodic (주기 패턴)**: LSTM 0.734 > Static 0.491 > LinUCB 0.473. 예측 기반 전략이 전환 지점을 선제 처리하며, error 전환 차이(±30초)가 음수로 개선됐다.
+- **Spike (급증)**: LSTM 0.698, Static 0.609, LinUCB 0.605. 적응 시간은 LinUCB/Static이 89초 수준에 머무르지만, LSTM은 spike 구간에서도 허용률을 70 % 가까이 끌어올렸다.
+
+결론적으로 전체 학습 데이터를 사용하면 LSTM이 4개 시나리오 전반에서 명확한 우위를 보인다. 남은 과제는 (1) Gradual/Periodic에서의 MAE 추가 감소, (2) LinUCB 탐색 정책 개선, (3) Static 임계값의 동적 보조 전략 설계다.

@@ -1,0 +1,17 @@
+{
+  "model": "LSTM",
+  "scenario": "periodic",
+  "seed": 2,
+  "p99_latency": 235.75787816871255,
+  "success_rate": 0.4038888888888889,
+  "stability_score": 0.03833333333333333,
+  "adaptation_time": null,
+  "predictive_mae": 1089.8610000936876,
+  "tracking_lag_seconds": null,
+  "pattern_recognition": -0.9886676831723328,
+  "proactive_adjustment": 0.0062795956991758385,
+  "confidence_interval": [
+    0.3812212440308896,
+    0.42655653374688823
+  ]
+}

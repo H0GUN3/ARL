@@ -1,0 +1,17 @@
+{
+  "model": "LSTM",
+  "scenario": "burst",
+  "seed": 2,
+  "p99_latency": 150.83025068758462,
+  "success_rate": 0.6445497630331753,
+  "stability_score": 0.3981042654028436,
+  "adaptation_time": 0.0,
+  "predictive_mae": 341.3026367940517,
+  "tracking_lag_seconds": null,
+  "pattern_recognition": null,
+  "proactive_adjustment": null,
+  "confidence_interval": [
+    0.5799658292866096,
+    0.7091336967797411
+  ]
+}

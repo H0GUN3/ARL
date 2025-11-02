@@ -3,518 +3,103 @@
 ## 1. 시스템 아키텍처
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│         BurstGPT Raw Data                               │
-│         (CSV, 5.29M traces)                             │
-└────────────────────┬────────────────────────────────────┘
-                     │
-                     ▼
-            ┌─────────────────┐
-            │ data_pipeline   │
-            │ (Preprocessing) │
-            └────────┬────────┘
-                     │
-                     ▼
-        ┌────────────────────────┐
-        │ burstgpt_timeseries    │
-        │ (1-sec aggregated)     │
-        └────────────────────────┘
-                  │
-    ┌─────────────┼─────────────┐
-    │             │             │
-    ▼             ▼             ▼
-┌────────┐  ┌────────┐  ┌────────┐
-│ LSTM   │  │LinUCB  │  │Static  │
-│ Model  │  │ Agent  │  │ Agent  │
-└────┬───┘  └───┬────┘  └───┬────┘
-     │          │           │
-     └──────────┼───────────┘
-                │
-                ▼
-        ┌───────────────┐
-        │  Simulator    │
-        │  (Evaluation) │
-        └───────┬───────┘
-                │
-                ▼
-        ┌───────────────┐
-        │  Evaluation   │
-        │  Metrics      │
-        └───────┬───────┘
-                │
-                ▼
-        ┌───────────────┐
-        │   Results     │
-        │   (CSV)       │
-        └───────────────┘
+BurstGPT Raw Data (CSV)
+        │
+        ▼
+data_pipeline.py ──▶ burstgpt_timeseries.csv / train_set.csv / warmup_set.csv
+        │
+        ├── scenario_extraction.py ──▶ data/scenarios/*.csv (실측 패턴)
+        │
+        └── models
+             ├─ lstm_model.py  (Predictive, 오프라인 학습)
+             ├─ linucb_agent.py (Reactive, 온라인 적응)
+             └─ baseline.py     (Static P95)
+
+Simulator (src/simulator.py)
+        │
+        └── Evaluation (src/evaluation.py)
+                 ├─ experiments/run_all_scenarios.py
+                 ├─ experiments/statistical_analysis.py
+                 └─ plots/
 ```
 
 ---
 
-## 2. 모듈별 API 정의
+## 2. 모듈별 개요
 
-### 2.1 data_pipeline.py
+### 2.1 `src/data_pipeline.py`
+- **역할**: BurstGPT CSV 로드 → 품질 검증 → 1초 단위 시계열 생성 → Train/Warmup/Test 분할.
+- **핵심 함수**
+  - `load_and_validate_burstgpt(Path) -> DataFrame`: Timestamp 단조 증가, 결측/토큰 무결성 검증.
+  - `create_timeseries(DataFrame) -> DataFrame`: RPS, p99 latency, error_rate, cpu_percent 집계.
+  - `add_multi_resolution_features(timeseries, raw, resolutions)`: 1s/100ms/10ms 등 서브초 통계 추가.
+  - `PipelineConfig`: `multi_resolutions`, `enable_tfdv`, `tfdv_*_path` 등 파이프라인 옵션 정의.
+  - `run_pipeline(config) -> Dict[str, Path]`: CSV(+TFDV 통계) 저장.
 
-**목적**: BurstGPT 원본 데이터를 1초 단위 시계열로 변환
+### 2.2 `src/scenario_extraction.py`
+- **역할**: BurstGPT 실측 로그에서 네 가지 시나리오 추출.
+  - `extract_periodic_conversation`, `extract_api_burst`, `extract_gradual_drift`, `extract_failure_spike`.
+  - `ScenarioExtractionConfig`: 시간 구간, burst 배수, failure 임계값 등 설정.
+  - `extract_burstgpt_scenarios(raw) -> Dict[str, ScenarioData]`.
+- **스크립트**: `scripts/prepare_scenarios.py --data-dir data --output-dir data/scenarios`.
 
-#### 함수: `load_burstgpt(csv_path: str) -> pd.DataFrame`
-```python
-"""
-입력:
-  csv_path: BurstGPT CSV 파일 경로
+### 2.3 `src/lstm_model.py`
+- **역할**: 예측형 Rate Limiter.
+  - `LSTMPredictor(window_size=60, horizon=60, hidden_units=(64,32), dropout, learning_rate)`.
+  - `fit(train_df, epochs, patience, samples_per_epoch, sampler)` – StratifiedRandomSequenceDataset로 시나리오 균형 학습.
+  - `predict(context_df)` – 최근 window 기반 60초 수요 예측.
+  - `save/load` – PyTorch state + scaler 저장.
 
-반환:
-  DataFrame with columns:
-    - timestamp (datetime)
-    - request_tokens (int)
-    - response_tokens (int)
-    - model (str)
-    - log_type (str)
+### 2.4 `src/linucb_agent.py`
+- **역할**: 컨텍스트 밴딧 기반 반응형 Rate Limiter.
+  - 컨텍스트 예시: `[rps, error_rate, cpu_percent, rps_delta_5s, rps_std_30s, time_of_day_sin/cos]`.
+  - `LinUCBAgent(action_space, alpha, alpha_decay=True)` – 계층형 액션 공간, α 감쇠 스케줄 지원.
+  - `warmup(warmup_df)` – 초기 10% 데이터로 A/b 업데이트 및 탐험 시작.
+  - `select_action(context)`, `update(context, action, reward)`.
+  - `save/load` – JSON 기반 파라미터 직렬화.
 
-예외:
-  FileNotFoundError: 파일 없음
-  ValueError: 데이터 형식 오류
-"""
-```
+### 2.5 `src/baseline.py`
+- **역할**: Static P95 Rate Limiter 생성 (`StaticRateLimiter.from_data(train_df)`).
 
-#### 함수: `aggregate_to_timeseries(df: pd.DataFrame, interval: int = 1) -> pd.DataFrame`
-```python
-"""
-입력:
-  df: 원본 BurstGPT DataFrame
-  interval: 집계 간격 (초, 기본 1초)
+### 2.6 `src/simulator.py`
+- **역할**: 오프라인 시뮬레이션.
+  - `run_simulation(model, test_df, scenario, seed)` – 초단위로 throttle 적용 및 요청 수락 여부 계산.
+  - 출력: `SimulationResult` (success_rate, p99_latency, stability_score, adaptation_time 등 + 상세 DataFrame).
+  - 가드레일: LinUCB tracking lag, failure spike 복구 시간 계산.
 
-반환:
-  DataFrame with columns:
-    - timestamp (datetime, index)
-    - rps (float): requests per second
-    - p99_latency (float): response_tokens × 30ms
-    - error_rate (float): failed / total
-    - avg_response_tokens (int)
+### 2.7 `src/evaluation.py`
+- **역할**: 메트릭 계산 및 통계 검정.
+  - `compute_metrics(detailed_results, scenario)` – 시나리오별 핵심 지표 집계.
+  - `run_statistical_tests(model1_results, model2_results)` – paired t-test, 효과크기 계산.
+  - `generate_report(results_dict)` – 마크다운 요약 생성.
 
-계산 로직:
-  rps = count(requests) / interval
-  p99_latency = quantile(response_tokens, 0.99) × 30
-  error_rate = count(response_tokens == 0) / count(all)
-"""
-```
+### 2.8 `experiments/` 스크립트
+- `run_all_scenarios.py`
+  - Train/Warmup/Test 로드 → 모델 준비 → 4 시나리오 × 3 모델 × seeds 실행.
+  - 주요 CLI:
+    - `--scenario-dir`: `scripts/prepare_scenarios.py` 산출물 사용.
+    - `--linucb-context-keys`, `--linucb-decay-tau`, `--linucb-min-alpha`, `--disable-alpha-decay`: LinUCB 컨텍스트/탐험률 제어.
+    - `--lstm-stratified`, `--samples-per-epoch`: LSTM 균형 샘플링 및 학습 스케줄 조정.
+    - `--synthetic-only`: 실측 시나리오 없이 synthetic 기본값으로 회귀 테스트.
+- `statistical_analysis.py`: 결과 JSON/CSV 로딩, 메트릭 요약, 유의성 검정, 리포트 저장.
+- `visualization.py`: 성공률, p99, 안정도 등 그래프 생성.
 
-#### 함수: `split_data(df: pd.DataFrame) -> dict`
-```python
-"""
-입력:
-  df: 1초 단위 시계열 DataFrame (121일)
-
-반환:
-  {
-    'train': DataFrame (Day 1-84),
-    'warmup': DataFrame (Day 85-96),
-    'test': [DataFrame, ...] (Day 97-121, 5등분),
-    'split_info': {
-      'train_days': (1, 84),
-      'warmup_days': (85, 96),
-      'test_windows': [(97, 101), (102, 106), ...]
-    }
-  }
-
-검증:
-  ✅ No time leakage (test > warmup > train)
-  ✅ 5개 test 구간 균등 분할
-"""
-```
-
-#### 함수: `save_timeseries(df: pd.DataFrame, output_path: str) -> None`
-```python
-"""
-입력:
-  df: 1초 단위 시계열 DataFrame
-  output_path: 저장 경로 (e.g., data/burstgpt_timeseries.csv)
-
-저장 형식:
-  CSV with columns: timestamp, rps, p99_latency, error_rate, avg_response_tokens
-"""
-```
+### 2.9 `scripts/`
+- `run_pipeline.py`: 파이프라인 실행 + `--with-tfdv` 옵션으로 TFDV 산출물 생성.
+- `prepare_scenarios.py`: 실측 시나리오 CSV/메타데이터 생성.
 
 ---
 
-### 2.2 lstm_model.py
-
-**목적**: LSTM 기반 RPS 예측 모델
-
-#### 클래스: `LSTMPredictor`
-
-```python
-class LSTMPredictor:
-    """
-    LSTM 모델로 미래 60초 RPS 예측
-
-    속성:
-      window_size: 입력 시계열 길이 (60초)
-      hidden_units: LSTM 은닉층 크기 (128)
-      dropout: Dropout rate (0.2)
-      device: 실행 디바이스 ('cuda' or 'cpu')
-    """
-```
-
-#### 메서드: `__init__(window_size: int = 60, hidden_units: int = 128, dropout: float = 0.2)`
-```python
-"""
-초기화:
-  - LSTM 신경망 구축
-  - 모델을 device에 이동
-"""
-```
-
-#### 메서드: `fit(train_data: pd.DataFrame, epochs: int = 50, batch_size: int = 32) -> dict`
-```python
-"""
-입력:
-  train_data: DataFrame with 'rps' column (1.76M 초, 70%)
-  epochs: 학습 반복 수
-  batch_size: 배치 크기
-
-반환:
-  {
-    'train_loss': [float, ...],  # 각 epoch 손실값
-    'convergence': bool,  # 수렴 확인 (마지막 10 epoch 손실 차 < 0.01)
-    'model_path': str  # 저장된 모델 경로
-  }
-
-손실함수: MSE (Mean Squared Error)
-옵티마이저: Adam (lr=0.001)
-"""
-```
-
-#### 메서드: `predict(context: pd.DataFrame) -> np.ndarray`
-```python
-"""
-입력:
-  context: DataFrame with 'rps' column (최소 window_size = 60초)
-
-반환:
-  np.ndarray: 예측된 미래 60초 RPS (shape: (60,))
-
-로직:
-  1. 마지막 60초 데이터 추출
-  2. 정규화 (훈련 시 사용한 평균/표준편차)
-  3. 모델 통과
-  4. 역정규화
-"""
-```
-
-#### 메서드: `save(path: str) -> None` / `load(path: str) -> None`
-```python
-"""
-경로에 모델 저장/로드
-사용 형식: torch.save(), torch.load()
-"""
-```
-
----
-
-### 2.3 linucb_agent.py
-
-**목적**: LinUCB 기반 온라인 적응 Rate Limiting
-
-#### 클래스: `LinUCBAgent`
-
-```python
-class LinUCBAgent:
-    """
-    Contextual Bandit 기반 Rate Limiter
-
-    속성:
-      action_space: 가능한 throttle 임계값들 (50개, 500-5000 RPS)
-      exploration_rate: 탐험/활용 비율 (epsilon-greedy)
-      alpha: 신뢰도 파라미터 (0.25, 기본값)
-    """
-```
-
-#### 메서드: `__init__(action_space: list = None, alpha: float = 0.25)`
-```python
-"""
-초기화:
-  action_space: 기본값 [500, 600, ..., 5000] (50개 action)
-  alpha: 신뢰도 파라미터
-
-내부 상태:
-  - A (d×d matrix): 컨텍스트 외적의 합
-  - b (d vector): 리워드의 합
-  - 초기값: 0으로 설정
-"""
-```
-
-#### 메서드: `warmup(warmup_data: pd.DataFrame) -> dict`
-```python
-"""
-입력:
-  warmup_data: DataFrame (0.25M 초, 10%)
-
-반환:
-  {
-    'regret_curve': [float, ...],  # 각 초의 누적 후회
-    'convergence': bool,  # 수렴 확인
-    'final_params': dict  # 학습된 파라미터
-  }
-
-동작:
-  1. 매 초마다:
-     - context 관찰 (rps, error_rate, cpu)
-     - action 선택 (LinUCB 식)
-     - reward 받음 (success_rate)
-     - 파라미터 업데이트 (A, b)
-"""
-```
-
-#### 메서드: `select_action(context: np.ndarray) -> int`
-```python
-"""
-입력:
-  context: [rps, error_rate, cpu] (shape: (3,))
-
-반환:
-  int: 선택된 action index (0-49)
-
-로직:
-  arm = argmax_a (θ_a^T x + α √(x^T A_a^{-1} x))
-  여기서 θ_a = A_a^{-1} b_a
-"""
-```
-
-#### 메서드: `update(context: np.ndarray, action: int, reward: float) -> None`
-```python
-"""
-입력:
-  context: [rps, error_rate, cpu]
-  action: 선택된 action index
-  reward: 즉각적인 보상 (success rate)
-
-동작:
-  1. A[action] ← A[action] + context @ context.T
-  2. b[action] ← b[action] + reward * context
-"""
-```
-
-#### 메서드: `save(path: str) -> None` / `load(path: str) -> None`
-```python
-"""
-JSON 형식으로 A, b 행렬 저장/로드
-"""
-```
-
----
-
-### 2.4 simulator.py
-
-**목적**: Offline 환경에서 모든 모델 평가
-
-#### 함수: `run_simulation(model, test_data: pd.DataFrame, scenario: str) -> dict`
-```python
-"""
-입력:
-  model: LSTMPredictor, LinUCBAgent, or StaticRateLimiter
-  test_data: 평가용 DataFrame (0.5M 초, 20%)
-  scenario: 'normal' or 'spike'
-
-반환:
-  {
-    'p99_latency': float,  # 평균 P99 latency
-    'success_rate': float,  # 거부되지 않은 요청 비율
-    'stability_score': float,  # SLA 준수 시간 비율
-    'adaptation_time': float or None,  # spike 시나리오만
-    'detailed_results': pd.DataFrame  # 초별 결과
-  }
-
-동작 (pseudo-code):
-  for t in test_data:
-    if scenario == 'spike':
-      rps = create_spike(t)
-    else:
-      rps = test_data[t].rps
-
-    context = extract_context(rps, error_rate, cpu)
-    action = model.predict(context)
-    success = simulate_request(action, rps)
-
-    결과 저장: p99, success_rate, stability
-"""
-```
-
-#### 함수: `extract_context(rps: float, error_rate: float, cpu: float) -> np.ndarray`
-```python
-"""
-입력:
-  rps, error_rate, cpu: 현재 시스템 상태
-
-반환:
-  np.ndarray: 정규화된 context [0-1]
-"""
-```
-
-#### 함수: `simulate_request(throttle_limit: int, current_rps: float) -> bool`
-```python
-"""
-입력:
-  throttle_limit: Rate limiter가 설정한 허용 RPS
-  current_rps: 실제 들어오는 RPS
-
-반환:
-  bool: True (요청 통과) or False (거부)
-
-로직:
-  if current_rps <= throttle_limit:
-    return True
-  else:
-    return False with probability (throttle_limit / current_rps)
-"""
-```
-
----
-
-### 2.5 evaluation.py
-
-**목적**: 메트릭 계산 및 통계 분석
-
-#### 함수: `compute_metrics(detailed_results: pd.DataFrame, scenario: str) -> dict`
-```python
-"""
-입력:
-  detailed_results: 초별 결과 DataFrame
-  scenario: 'normal' or 'spike'
-
-반환:
-  {
-    'p99_latency': float,
-    'success_rate': float,
-    'stability_score': float,
-    'adaptation_time': float or None,
-    'confidence_interval': (float, float)  # 95% CI
-  }
-"""
-```
-
-#### 함수: `run_statistical_tests(model1_results: list, model2_results: list) -> dict`
-```python
-"""
-입력:
-  model1_results: 10회 반복 결과 [metric1, metric2, ...]
-  model2_results: 10회 반복 결과
-
-반환:
-  {
-    'p_value': float,  # paired t-test
-    'significant': bool,  # p < 0.05
-    'effect_size': float,  # Cohen's d
-    't_statistic': float
-  }
-
-테스트:
-  scipy.stats.ttest_rel(model1_results, model2_results)
-"""
-```
-
-#### 함수: `generate_report(all_results: dict) -> str`
-```python
-"""
-입력:
-  all_results: 모든 모델×시나리오×seed 결과
-
-반환:
-  str: 마크다운 형식 최종 리포트
-
-내용:
-  - 시나리오별 성능 표
-  - 통계 검증 결과
-  - 시각화 파일 경로
-"""
-```
-
----
-
-## 3. 데이터 흐름
-
-### 3.1 학습 단계 (Training Phase)
-
-```
-Day 1-2:
-  Train Data (70%) → data_pipeline → LSTM.fit() → model.pkl
-  Warmup Data (10%) → data_pipeline → LinUCB.warmup() → agent.json
-```
-
-### 3.2 평가 단계 (Evaluation Phase)
-
-```
-Day 3-4:
-  Test Data (20%, 5 windows) → Simulator
-  ├─ LSTM model → metrics
-  ├─ LinUCB agent → metrics
-  └─ Static baseline → metrics
-
-  10 seeds × 2 scenarios = 60 runs in parallel
-  ↓
-  results/ → statistical_analysis
-```
-
-### 3.3 분석 단계 (Analysis Phase)
-
-```
-Day 5-7:
-  results/ → evaluation.py → statistical_tests
-  ├─ t-test
-  ├─ effect size
-  └─ confidence intervals
-  ↓
-  plots/ (visualization)
-  ↓
-  논문 작성
-```
-
----
-
-## 4. 에러 처리
-
-### 4.1 Data Pipeline
-| 에러 | 처리 |
-|------|------|
-| FileNotFoundError | 상세 메시지와 함께 종료 |
-| Missing columns | 필수 컬럼 목록 출력 |
-| Time leakage | 검증 후 assert 실패 |
-
-### 4.2 Model Training
-| 에러 | 처리 |
-|------|------|
-| OOM (Out of Memory) | batch_size 감소 후 재시작 |
-| NaN loss | 학습률 감소 또는 데이터 정규화 |
-| Convergence fail | warning 출력, 모델 저장 |
-
-### 4.3 Evaluation
-| 에러 | 처리 |
-|------|------|
-| Model not found | 명확한 에러 메시지 |
-| Shape mismatch | 입력 검증 강화 |
-
----
-
-## 5. 함수 서명 요약
-
-| 모듈 | 함수 | 입력 | 출력 |
-|------|------|------|------|
-| data_pipeline | load_burstgpt | str | DataFrame |
-| data_pipeline | aggregate_to_timeseries | DataFrame | DataFrame |
-| data_pipeline | split_data | DataFrame | dict |
-| lstm_model | fit | DataFrame | dict |
-| lstm_model | predict | DataFrame | ndarray |
-| linucb_agent | warmup | DataFrame | dict |
-| linucb_agent | select_action | ndarray | int |
-| simulator | run_simulation | model, DataFrame | dict |
-| evaluation | compute_metrics | DataFrame | dict |
-| evaluation | run_statistical_tests | list, list | dict |
-
----
-
-## 6. 확장성 고려사항
-
-- **병렬 실행**: 60개 run을 병렬로 실행하기 위해 각 함수는 state를 공유하지 않도록 설계
-- **결과 저장**: 중간 결과를 자동으로 저장하여 재실행 불필요
-- **재현성**: 모든 seed와 하이퍼파라미터 로깅
-
+## 3. 모델 비교 프레임워크 요약
+
+1. **데이터 준비**
+   - `run_pipeline.py` → `burstgpt_timeseries.csv`, `train_set.csv`, `warmup_set.csv`.
+   - `prepare_scenarios.py` → `data/scenarios/{periodic,burst,drift,failure}.csv`.
+2. **모델 학습**
+   - LSTM: Train 70% (Stratified 샘플링, EarlyStopping).
+   - LinUCB: Warmup 10% (확장 컨텍스트, α 감쇠).
+3. **평가**
+   - Simulator가 각 시나리오 CSV를 순회하며 Static/LSTM/LinUCB 결과 저장.
+   - Evaluation 모듈이 메트릭/통계 분석 및 보고서 작성.
+4. **결과 관리**
+   - `results_<tag>/`, `plots/<tag>/`, `artifacts/<tag>/`로 버전별 산출물 분리 (`docs/EXPERIMENT_VERSIONS.md` 참조).

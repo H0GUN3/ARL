@@ -1,0 +1,17 @@
+{
+  "model": "LinUCB",
+  "scenario": "burst",
+  "seed": 0,
+  "p99_latency": 150.83025068758462,
+  "success_rate": 0.7488151658767772,
+  "stability_score": 0.3696682464454976,
+  "adaptation_time": 0.0,
+  "predictive_mae": null,
+  "tracking_lag_seconds": 99.0,
+  "pattern_recognition": null,
+  "proactive_adjustment": null,
+  "confidence_interval": [
+    0.6902969756532588,
+    0.8073333561002957
+  ]
+}

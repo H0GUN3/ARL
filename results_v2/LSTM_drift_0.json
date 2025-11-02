@@ -1,0 +1,17 @@
+{
+  "model": "LSTM",
+  "scenario": "drift",
+  "seed": 0,
+  "p99_latency": 171.57515833891316,
+  "success_rate": 0.7333333333333333,
+  "stability_score": 0.5888888888888889,
+  "adaptation_time": null,
+  "predictive_mae": 816.1683850961616,
+  "tracking_lag_seconds": null,
+  "pattern_recognition": null,
+  "proactive_adjustment": null,
+  "confidence_interval": [
+    0.6419721080408695,
+    0.8246945586257971
+  ]
+}

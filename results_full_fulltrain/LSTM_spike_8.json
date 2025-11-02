@@ -1,0 +1,17 @@
+{
+  "model": "LSTM",
+  "scenario": "spike",
+  "seed": 8,
+  "p99_latency": 243.89741579427996,
+  "success_rate": 0.7405405405405405,
+  "stability_score": 0.3891891891891892,
+  "adaptation_time": 81.0,
+  "predictive_mae": 1524.0539860658675,
+  "tracking_lag_seconds": null,
+  "pattern_recognition": null,
+  "proactive_adjustment": null,
+  "confidence_interval": [
+    0.6773762822644886,
+    0.8037047988165924
+  ]
+}

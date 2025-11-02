@@ -1,0 +1,17 @@
+{
+  "model": "LinUCB",
+  "scenario": "drift",
+  "seed": 0,
+  "p99_latency": 171.57515833891316,
+  "success_rate": 0.5666666666666667,
+  "stability_score": 0.4444444444444444,
+  "adaptation_time": null,
+  "predictive_mae": null,
+  "tracking_lag_seconds": 56.0,
+  "pattern_recognition": null,
+  "proactive_adjustment": null,
+  "confidence_interval": [
+    0.46428982711682104,
+    0.6690435062165123
+  ]
+}

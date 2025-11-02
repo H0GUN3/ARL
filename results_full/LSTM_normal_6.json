@@ -1,0 +1,17 @@
+{
+  "model": "LSTM",
+  "scenario": "normal",
+  "seed": 6,
+  "p99_latency": 185.95760813494493,
+  "success_rate": 0.5044444444444445,
+  "stability_score": 0.035555555555555556,
+  "adaptation_time": null,
+  "predictive_mae": 443.2336881699411,
+  "tracking_lag_seconds": null,
+  "pattern_recognition": null,
+  "proactive_adjustment": null,
+  "confidence_interval": [
+    0.48134695991924287,
+    0.527541928969646
+  ]
+}

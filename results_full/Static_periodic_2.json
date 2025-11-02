@@ -1,0 +1,17 @@
+{
+  "model": "Static",
+  "scenario": "periodic",
+  "seed": 2,
+  "p99_latency": 235.75787816871255,
+  "success_rate": 0.49944444444444447,
+  "stability_score": 0.0011111111111111111,
+  "adaptation_time": null,
+  "predictive_mae": null,
+  "tracking_lag_seconds": null,
+  "pattern_recognition": -0.9886676831723328,
+  "proactive_adjustment": 0.0062795956991758385,
+  "confidence_interval": [
+    0.476346061630224,
+    0.5225428272586649
+  ]
+}

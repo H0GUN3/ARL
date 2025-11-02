@@ -1,8 +1,8 @@
 # AI 도구 통합 가이드 (AI Integration Guide)
 
-## 1. Claude Code와 SDD (Spec-Driven Development)
+## 1. Codex와 SDD (Spec-Driven Development)
 
-### 1.1 Claude Code 사용 워크플로우
+### 1.1 Codex 사용 워크플로우
 
 ```
 명세 작성 (@docs/SPEC.md)
@@ -11,7 +11,7 @@ API 설계 (@docs/API_DESIGN.md)
         ↓
 구현 지시 작성 (명확한 지시)
         ↓
-Claude Code 실행
+Codex 실행
   → 지시와 @docs/*.md 참조
   → 명세에 맞는 코드 생성
         ↓
@@ -20,7 +20,7 @@ Claude Code 실행
 반복 수정 (필요시)
 ```
 
-### 1.2 Claude Code에 지시할 때 원칙
+### 1.2 Codex에 지시할 때 원칙
 
 ✅ **DO (해야 할 것)**:
 ```
@@ -45,13 +45,13 @@ LSTM 모델을 구현해줘.
 
 ---
 
-## 2. 모듈별 Claude Code 사용법
+## 2. 모듈별 Codex 사용법
 
 ### 2.1 data_pipeline.py 구현
 
 **명세 참조**: @docs/API_DESIGN.md 섹션 2.1
 
-**Claude Code 지시 예시**:
+**Codex 지시 예시**:
 ```
 @docs/API_DESIGN.md의 data_pipeline.py 섹션을 보면서
 src/data_pipeline.py를 구현해줘.
@@ -81,7 +81,7 @@ src/data_pipeline.py를 구현해줘.
 
 **명세 참조**: @docs/API_DESIGN.md 섹션 2.2, @docs/IMPLEMENTATION_GUIDE.md 섹션 3.1
 
-**Claude Code 지시**:
+**Codex 지시**:
 ```
 @docs/API_DESIGN.md를 보면서 src/lstm_model.py를 구현해줘.
 
@@ -93,7 +93,7 @@ src/data_pipeline.py를 구현해줘.
 - device: cuda or cpu
 
 메서드:
-1. fit(train_data, epochs=50, batch_size=32)
+1. fit(train_data, epochs=50, batch_size=32, samples_per_epoch=200_000)
    - 입력: DataFrame with 'rps' column (1.76M 초)
    - 손실함수: MSE
    - 옵티마이저: Adam (lr=0.001)
@@ -117,7 +117,7 @@ src/data_pipeline.py를 구현해줘.
 
 **명세 참조**: @docs/API_DESIGN.md 섹션 2.3
 
-**Claude Code 지시**:
+**Codex 지시**:
 ```
 @docs/API_DESIGN.md를 참고하여 src/linucb_agent.py를 구현해줘.
 
@@ -153,7 +153,7 @@ src/data_pipeline.py를 구현해줘.
 
 **명세 참조**: @docs/API_DESIGN.md 섹션 2.4
 
-**Claude Code 지시**:
+**Codex 지시**:
 ```
 @docs/API_DESIGN.md를 참고하여 src/simulator.py를 구현해줘.
 
@@ -170,13 +170,17 @@ src/data_pipeline.py를 구현해줘.
    - 시나리오 처리:
      * normal: 원본 RPS 사용
      * spike: Day 97-110 중에 5배 급증 (10초 동안) 주입
+      * gradual: 30s baseline → 90s 선형 증가 → 30s peak 유지
+      * periodic: 저부하/고부하 10분 주기 반복, transition 플래그 포함
 
    - 반환: {
        'p99_latency': float,
        'success_rate': float,
        'stability_score': float,
        'adaptation_time': float (spike만),
-       'detailed_results': pd.DataFrame
+       'predictive_mae': float (gradual/LSTM),
+       'tracking_lag_seconds': float (gradual/LinUCB),
+       'detailed_results': pd.DataFrame (scenario 메타데이터 포함)
      }
 
 2. extract_context(rps, error_rate, cpu)
@@ -192,7 +196,7 @@ src/data_pipeline.py를 구현해줘.
 
 **명세 참조**: @docs/API_DESIGN.md 섹션 2.5
 
-**Claude Code 지시**:
+**Codex 지시**:
 ```
 @docs/API_DESIGN.md를 참고하여 src/evaluation.py를 구현해줘.
 
@@ -222,20 +226,20 @@ src/data_pipeline.py를 구현해줘.
 
 **명세 참조**: @docs/IMPLEMENTATION_GUIDE.md 섹션 6
 
-**Claude Code 지시**:
+**Codex 지시**:
 ```
 @docs/IMPLEMENTATION_GUIDE.md의 Phase 6을 참고하여
 experiments/run_all_scenarios.py를 구현해줘.
 
 요구사항:
-1. 60개 실험을 병렬 실행
-   - 2 시나리오 × 3 모델 × 10 seeds
+1. 120개 실험을 병렬 실행 (샘플 설정은 축약 가능)
+   - 4 시나리오 × 3 모델 × 10 seeds
    - multiprocessing.Pool 사용 (8 processes)
 
 2. 각 실험마다:
    - 모델 로드 (또는 학습)
    - 시뮬레이션 실행
-   - 결과 저장 (results/모델_시나리오_seed.json)
+   - 결과 저장 (results/{모델}_{시나리오}_{seed}.json)
 
 3. 진행 상황 표시
    - 진행률 바 (tqdm)
@@ -248,7 +252,7 @@ experiments/run_all_scenarios.py를 구현해줘.
 
 ---
 
-## 4. Claude Code 프롬프트 템플릿
+## 4. Codex 프롬프트 템플릿
 
 ### 4.1 기본 템플릿
 
@@ -302,7 +306,7 @@ experiments/run_all_scenarios.py를 구현해줘.
 
 ---
 
-## 5. Claude Code 사용 시 효율 팁
+## 5. Codex 사용 시 효율 팁
 
 ### 5.1 컨텍스트 절감
 
@@ -346,13 +350,13 @@ experiments/run_all_scenarios.py를 구현해줘.
 5차: 문서화
 ```
 
-각 단계별로 Claude Code에 명확한 지시
+각 단계별로 Codex에 명확한 지시
 
 ---
 
 ## 6. 문제 해결 (Troubleshooting)
 
-### 6.1 Claude Code가 잘못된 코드 생성
+### 6.1 Codex가 잘못된 코드 생성
 
 **해결책**:
 1. @docs/[DOCUMENT].md에서 해당 섹션 다시 읽기
@@ -403,18 +407,17 @@ experiments/run_all_scenarios.py를 구현해줘.
 
 ## 7. SDD 워크플로우 체크리스트
 
-| 단계 | 작업 | Claude Code | 체크 |
+| 단계 | 작업 | Codex | 체크 |
 |------|------|-----------|------|
-| 1 | @docs/SPEC.md 작성 | 없음 | [ ] |
-| 2 | @docs/API_DESIGN.md 작성 | 없음 | [ ] |
-| 3 | @docs/IMPLEMENTATION_GUIDE.md 작성 | 없음 | [ ] |
-| 4 | data_pipeline.py 구현 | ✅ | [ ] |
-| 5 | lstm_model.py 구현 | ✅ | [ ] |
-| 6 | linucb_agent.py 구현 | ✅ | [ ] |
-| 7 | simulator.py 구현 | ✅ | [ ] |
-| 8 | evaluation.py 구현 | ✅ | [ ] |
-| 9 | 단위 테스트 | ✅ | [ ] |
+| 1 | @docs/SPEC.md 작성 | 없음 | [x] |
+| 2 | @docs/API_DESIGN.md 작성 | 없음 | [x] |
+| 3 | @docs/IMPLEMENTATION_GUIDE.md 작성 | 없음 | [x] |
+| 4 | data_pipeline.py 구현 | ✅ | [x] |
+| 5 | lstm_model.py 구현 | ✅ | [x] |
+| 6 | linucb_agent.py 구현 | ✅ | [x] |
+| 7 | simulator.py 구현 | ✅ | [x] |
+| 8 | evaluation.py 구현 | ✅ | [x] |
+| 9 | 단위 테스트 | ✅ | [x] |
 | 10 | 통합 테스트 | 부분 | [ ] |
-| 11 | 병렬 실행 스크립트 | ✅ | [ ] |
-| 12 | 시각화 및 리포팅 | ✅ | [ ] |
-
+| 11 | 병렬 실행 스크립트 | ✅ | [x] |
+| 12 | 시각화 및 리포팅 | ✅ | [x] |

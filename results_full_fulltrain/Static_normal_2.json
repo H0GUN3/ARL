@@ -1,0 +1,17 @@
+{
+  "model": "Static",
+  "scenario": "normal",
+  "seed": 2,
+  "p99_latency": 185.95760813494493,
+  "success_rate": 0.625,
+  "stability_score": 0.0011111111111111111,
+  "adaptation_time": null,
+  "predictive_mae": null,
+  "tracking_lag_seconds": null,
+  "pattern_recognition": null,
+  "proactive_adjustment": null,
+  "confidence_interval": [
+    0.6026350732035355,
+    0.6473649267964645
+  ]
+}

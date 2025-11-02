@@ -1,0 +1,17 @@
+{
+  "model": "LinUCB",
+  "scenario": "spike",
+  "seed": 8,
+  "p99_latency": 243.89741579427996,
+  "success_rate": 0.6270270270270271,
+  "stability_score": 0.35135135135135137,
+  "adaptation_time": 89.0,
+  "predictive_mae": null,
+  "tracking_lag_seconds": 90.0,
+  "pattern_recognition": null,
+  "proactive_adjustment": null,
+  "confidence_interval": [
+    0.557341267422665,
+    0.6967127866313891
+  ]
+}

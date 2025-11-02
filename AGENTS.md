@@ -1,12 +1,12 @@
-# Claude Code 스펙 주도 개발 가이드
+# Codex 스펙 주도 개발 가이드
 
 > **Spec-Driven Development (SDD)**: 공식적이고 상세한 명세를 AI 코드 생성의 기반으로 사용하는 개발 방법론
 
 ## 프로젝트 개요
 
 **프로젝트**: API Rate Limiting 전략 비교 연구 (LSTM vs LinUCB)
-**방법론**: Spec-Driven Development + Claude Code
-**AI 도구**: Claude AI (via Claude Code)
+**방법론**: Spec-Driven Development + Codex
+**AI 도구**: OpenAI Codex
 
 ---
 
@@ -20,7 +20,8 @@
 ### 🔨 구현 가이드
 - @docs/IMPLEMENTATION_GUIDE.md - 단계별 구현 절차
 - @docs/TESTING_STRATEGY.md - 테스트 및 검증 전략
-- @docs/AI_INTEGRATION.md - Claude AI 및 AI 도구 활용 방법
+- @docs/AI_INTEGRATION.md - Codex 및 AI 도구 활용 방법
+- @docs/PHASE.md - 단계별 개발 순서 및 체크리스트
 
 ### 📖 참고 자료
 - 검증.md - 방법론 검증 (기존 문서)
@@ -54,10 +55,10 @@
 3. @docs/FOLDER_STRUCTURE.md로 폴더 생성
 4. @docs/IMPLEMENTATION_GUIDE.md 따라 구현
 
-### Claude Code로 작업할 때
+### Codex로 작업할 때
 1. 특정 파일 또는 모듈에 대해 명확한 작업 지시
 2. 반드시 해당하는 @docs/*.md 파일 참조
-3. 명세에 맞지 않는 변경은 먼저 CLAUDE.md에서 승인받기
+3. 명세에 맞지 않는 변경은 먼저 AGENTS.md에서 승인받기
 
 ---
 
@@ -77,7 +78,7 @@
 
 ```
 limiting/
-├── CLAUDE.md (이 파일)
+├── AGENTS.md (이 파일)
 ├── 검증.md
 ├── AI문제.md
 ├── docs/
@@ -106,12 +107,13 @@ limiting/
 
 ---
 
-## Claude Code 사용 시 주의사항
+## Codex 사용 시 주의사항
 
 ✅ **권장**:
 - @docs 파일에서 명세 인용하며 작업 지시
 - "명세에 따라 구현" 명확히 하기
-- 변경 전에 CLAUDE.md에서 검토 요청
+- 변경 전에 AGENTS.md에서 검토 요청
+- 단계가 끝날 때마다 @docs/PHASE.md 체크박스와 AGENTS.md 진행 로그를 갱신
 
 ❌ **지양**:
 - 명확한 명세 없이 즉흥적 개발
@@ -122,5 +124,15 @@ limiting/
 
 ## 다음 단계
 
-> **지금 해야 할 일**: @docs/SPEC.md 작성 → 명세 확정 → 구현 시작
+> **지금 해야 할 일**: `scripts/prepare_scenarios.py`로 BurstGPT 실측 시나리오를 생성하고, Phase 6 비교 실험(Periodic/Burst/Drift/Failure 기반 LSTM vs LinUCB) 준비를 진행한다.
 
+## 진행 로그
+
+- Phase 0 완료: 가상환경 구축, 데이터 무결성 확인, `scripts/eda.py` 실행 및 보고서 검토 (체크리스트 업데이트)
+- Phase 1 완료: BurstGPT 무결성 검증 → 1초 시계열 생성 → 품질 체크(6항목) → 70/10/20 CSV 저장 (`pytest tests/test_data_pipeline.py`)
+- Phase 2 완료: Normal/Spike/Gradual/Periodic 시나리오 + 다중 피처 LSTM + LinUCB 워밍업 구현 (`pytest` 단위 테스트 통과)
+- Phase 3 완료: `src/simulator.py` 개선, `experiments/run_all_scenarios.py` 재설계 (4×3×seeds) 및 결과 저장/재현성 점검 (`pytest tests/test_simulator.py`)
+- Phase 4 완료: `src/evaluation.py`, `experiments/statistical_analysis.py`, `experiments/visualization.py` 구현 및 `pytest` 확장으로 메트릭/통계/시각화 파이프라인 검증
+- Phase 5 완료: Spec 스케일 맞춘 데이터 재생성 → 4 시나리오 × 3 모델 × 10 seeds(120회) 실행 (`results_full/` 저장), `results_full/statistical_report.md`·`summary_metrics.csv` 작성 및 README/PHASE 체크박스 갱신, `plots/full/` 시각화 생성
+- 재학습/재실험(202k 샘플): `results_full_rerun/`에 120회 결과 갱신, LSTM 성능 개선(Gradual 0.493, Normal 0.575 등), `plots/full_rerun/` 시각화 추가
+- 전체 학습(70% 데이터, random sampling): `results_full_fulltrain/`에 최종 120회 결과 저장 (Gradual 0.632, Normal 0.9999, Periodic 0.734, Spike 0.698), `plots/full_fulltrain/` 이미지 생성, README/문서 갱신

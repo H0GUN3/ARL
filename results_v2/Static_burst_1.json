@@ -1,0 +1,17 @@
+{
+  "model": "Static",
+  "scenario": "burst",
+  "seed": 1,
+  "p99_latency": 150.83025068758462,
+  "success_rate": 0.8672985781990521,
+  "stability_score": 0.44075829383886256,
+  "adaptation_time": 0.0,
+  "predictive_mae": null,
+  "tracking_lag_seconds": null,
+  "pattern_recognition": null,
+  "proactive_adjustment": null,
+  "confidence_interval": [
+    0.8215235133104394,
+    0.9130736430876648
+  ]
+}

@@ -15,7 +15,7 @@
 ### 1단계: 문서 읽기
 ```bash
 # 스펙 주도 개발 가이드
-cat CLAUDE.md
+cat AGENTS.md
 
 # 프로젝트 명세
 cat docs/SPEC.md
@@ -36,19 +36,37 @@ pip install -r requirements.txt
 # → data/burstgpt_v1.1.csv로 저장
 
 # 데이터 전처리
+# 기본 파이프라인 실행
 python src/data_pipeline.py
+
+# (선택) TFDV 통계/스키마/이상치 리포트 생성
+# pip install tensorflow-data-validation 후 실행
+python scripts/run_pipeline.py --with-tfdv
+
+# (선택) BurstGPT 기반 시나리오 추출
+python scripts/prepare_scenarios.py --data-dir data --output-dir data/scenarios
 ```
 
 ### 4단계: 모델 구현 및 학습
 ```bash
-# 각 모듈은 @docs/API_DESIGN.md를 참고하여 Claude Code로 구현
+# 각 모듈은 @docs/API_DESIGN.md를 참고하여 Codex로 구현
 # 구현 순서: data_pipeline → lstm_model → linucb_agent → simulator → evaluation
 ```
 
 ### 5단계: 실험 실행
 ```bash
-python experiments/run_all_scenarios.py
+python experiments/run_all_scenarios.py \
+  --scenario-dir data/scenarios \
+  --linucb-context-keys rps,error_rate,cpu_percent,rps_delta_5s,rps_std_30s,time_of_day_sin,time_of_day_cos \
+  --lstm-stratified \
+  --seeds 0 1 2
 ```
+
+- `--scenario-dir`: `scripts/prepare_scenarios.py`가 생성한 BurstGPT 실측 시나리오를 로드합니다. (없으면 synthetic 시나리오 자동 생성)
+- `--linucb-context-keys`: LinUCB 컨텍스트 피처 목록을 지정합니다. 기본은 7개 확장 피처(급증 탐지 + 시간 인코딩)입니다.
+- `--lstm-stratified`: 학습 샘플을 시나리오별 균등 분포로 뽑아 드리프트/버스트 처리 능력을 키웁니다.
+- `--seeds`: 시나리오 × 모델 반복 실행을 위한 시드 리스트입니다.
+- `--synthetic-only`를 지정하면 실측 CSV 없이도 빠른 회귀 테스트를 수행할 수 있습니다.
 
 ### 6단계: 분석 및 시각화
 ```bash
@@ -62,13 +80,13 @@ python experiments/visualization.py
 
 ```
 limiting/
-├── CLAUDE.md                      # 🎯 스펙 주도 개발 가이드 (여기서 시작!)
+├── AGENTS.md                      # 🎯 스펙 주도 개발 가이드 (여기서 시작!)
 ├── docs/                          # 📋 명세 및 설계
 │   ├── SPEC.md                    # 프로젝트 명세
 │   ├── API_DESIGN.md              # API 설계
 │   ├── IMPLEMENTATION_GUIDE.md     # 구현 절차
 │   ├── TESTING_STRATEGY.md        # 테스트 전략
-│   ├── AI_INTEGRATION.md          # Claude Code 사용법
+│   ├── AI_INTEGRATION.md          # Codex 사용법
 │   └── FOLDER_STRUCTURE.md        # 폴더 구조
 ├── src/                           # 🔨 소스 코드
 ├── tests/                         # ✅ 테스트
@@ -88,10 +106,10 @@ limiting/
 1. **명세 작성** (@docs/SPEC.md)
 2. **API 설계** (@docs/API_DESIGN.md)
 3. **구현 가이드** (@docs/IMPLEMENTATION_GUIDE.md)
-4. **Claude Code로 구현** (@docs/AI_INTEGRATION.md 참고)
+4. **Codex로 구현** (@docs/AI_INTEGRATION.md 참고)
 5. **테스트** (@docs/TESTING_STRATEGY.md)
 
-**중요**: Claude Code 사용 시, 항상 @docs/*.md 파일을 참조합니다!
+**중요**: Codex 사용 시, 항상 @docs/*.md 파일을 참조합니다!
 
 ```
 ❌ 나쁜 예:
@@ -108,11 +126,11 @@ limiting/
 
 | 문서 | 대상자 | 목적 |
 |------|--------|------|
-| CLAUDE.md | 모두 | SDD 워크플로우 |
+| AGENTS.md | 모두 | SDD 워크플로우 |
 | @docs/SPEC.md | 개발자 | 무엇을 만들 것인가 |
 | @docs/API_DESIGN.md | 개발자 | 어떻게 만들 것인가 |
 | @docs/IMPLEMENTATION_GUIDE.md | 개발자 | 단계별 구현 |
-| @docs/AI_INTEGRATION.md | Claude Code 사용자 | AI와 함께 개발하는 법 |
+| @docs/AI_INTEGRATION.md | Codex 사용자 | AI와 함께 개발하는 법 |
 | @docs/TESTING_STRATEGY.md | QA | 테스트 계획 |
 
 ---
@@ -123,10 +141,25 @@ limiting/
 - [x] API 설계 (API_DESIGN.md)
 - [x] 구현 가이드 (IMPLEMENTATION_GUIDE.md)
 - [x] 폴더 구조 생성
-- [ ] src/ 모듈 구현 (진행 중)
-- [ ] tests/ 테스트 작성 (대기)
-- [ ] experiments/ 실험 실행 (대기)
-- [ ] results/ 분석 완료 (대기)
+- [x] src/ 모듈 구현 (데이터 파이프라인/모델/시나리오/시뮬레이터)
+- [x] tests/ 테스트 작성 (단위·통합·시나리오)
+- [x] experiments/ 실험 실행 스크립트 구성
+- [x] results/ 분석 보고서 작성 (`results_full/statistical_report.md`, 120-run 실험 반영)
+
+---
+
+## 실험 결과 요약 (Success Rate, seed 0-9 평균)
+
+| Scenario  | LSTM | LinUCB | Static |
+|-----------|------|--------|--------|
+| Gradual   | 0.632 | 0.455 | 0.463 |
+| Normal    | 1.000 | 0.610 | 0.634 |
+| Periodic  | 0.734 | 0.473 | 0.491 |
+| Spike     | 0.698 | 0.605 | 0.609 |
+
+- 전체 지표/통계: `results_full_fulltrain/summary_metrics.csv`, `results_full_fulltrain/statistical_report.md`
+- 시각화: `plots/full_fulltrain/comparison_p99_boxplot.png`, `plots/full_fulltrain/success_rate_barplot.png`, `plots/full_fulltrain/stability_score_barplot.png`
+- 요약 보고: `docs/REPORT_DRAFT.md`
 
 ---
 
@@ -141,15 +174,20 @@ Day 1-2: 구현
   ├─ evaluation.py
   └─ 단위 테스트
 
-Day 3-4: 실험
-  ├─ 60회 병렬 실행
-  ├─ 결과 저장
-  └─ 통계 분석
+Day 3-4: 실험 설계 & 시뮬레이션
+  ├─ Normal/Spike/Gradual/Periodic 시나리오 생성
+  ├─ LSTM/LinUCB/Static 준비
+  ├─ 시뮬레이터 개선 및 검증
 
-Day 5-7: 논문 작성
-  ├─ 시각화
-  ├─ 결과 정리
-  └─ 논문 완성
+Day 5-6: 실험 실행
+  ├─ 4 시나리오 × 3 모델 × 10 seeds (120 runs)
+  ├─ 결과 저장 (`results/`, `plots/`)
+  └─ 통계 분석/시각화 자동화
+
+Day 7: 논문/보고서 초안
+  ├─ 시각화 정리
+  ├─ 핵심 결과/통계 요약
+  └─ 결론 및 논의
 ```
 
 ---
@@ -158,13 +196,14 @@ Day 5-7: 논문 작성
 
 | 파일 | 담당 | 상태 |
 |------|------|------|
-| src/data_pipeline.py | Claude Code | [ ] 구현 예정 |
-| src/lstm_model.py | Claude Code | [ ] 구현 예정 |
-| src/linucb_agent.py | Claude Code | [ ] 구현 예정 |
-| src/simulator.py | Claude Code | [ ] 구현 예정 |
-| src/evaluation.py | Claude Code | [ ] 구현 예정 |
-| tests/*.py | Claude Code | [ ] 구현 예정 |
-| experiments/*.py | Claude Code | [ ] 구현 예정 |
+| src/data_pipeline.py | Codex | [x] 상세 명세 반영 |
+| src/lstm_model.py | Codex | [x] 다중 피처 LSTM 구현 |
+| src/linucb_agent.py | Codex | [x] 워밍업/저장 기능 |
+| src/scenario_generator.py | Codex | [x] Normal/Spike/Gradual/Periodic |
+| src/simulator.py | Codex | [x] 추가 메트릭 포함 |
+| src/evaluation.py | Codex | [x] 신규 메트릭 계산 |
+| tests/*.py | Codex | [x] 단위·통합 테스트 |
+| experiments/*.py | Codex | [x] 실행/통계/시각화 스크립트 |
 
 ---
 
@@ -204,5 +243,4 @@ MIT License
 
 ## 연락처
 
-프로젝트 관련 질문: CLAUDE.md 참조
-
+프로젝트 관련 질문: AGENTS.md 참조

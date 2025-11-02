@@ -1,0 +1,17 @@
+{
+  "model": "LinUCB",
+  "scenario": "gradual",
+  "seed": 6,
+  "p99_latency": 255.17893323544195,
+  "success_rate": 0.44,
+  "stability_score": 0.31333333333333335,
+  "adaptation_time": null,
+  "predictive_mae": null,
+  "tracking_lag_seconds": 116.0,
+  "pattern_recognition": null,
+  "proactive_adjustment": null,
+  "confidence_interval": [
+    0.360563003857605,
+    0.519436996142395
+  ]
+}

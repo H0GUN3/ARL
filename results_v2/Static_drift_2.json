@@ -1,0 +1,17 @@
+{
+  "model": "Static",
+  "scenario": "drift",
+  "seed": 2,
+  "p99_latency": 171.57515833891316,
+  "success_rate": 0.6777777777777778,
+  "stability_score": 0.5333333333333333,
+  "adaptation_time": null,
+  "predictive_mae": null,
+  "tracking_lag_seconds": null,
+  "pattern_recognition": null,
+  "proactive_adjustment": null,
+  "confidence_interval": [
+    0.581228674768389,
+    0.7743268807871666
+  ]
+}

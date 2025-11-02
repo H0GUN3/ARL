@@ -1,0 +1,17 @@
+{
+  "model": "Static",
+  "scenario": "spike",
+  "seed": 9,
+  "p99_latency": 243.89741579427996,
+  "success_rate": 0.6216216216216216,
+  "stability_score": 0.35135135135135137,
+  "adaptation_time": 91.0,
+  "predictive_mae": null,
+  "tracking_lag_seconds": null,
+  "pattern_recognition": null,
+  "proactive_adjustment": null,
+  "confidence_interval": [
+    0.5517359024682146,
+    0.6915073407750286
+  ]
+}
